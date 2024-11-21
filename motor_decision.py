@@ -6,12 +6,8 @@ from google.oauth2.service_account import Credentials
 import gspread
 import json
 
-# Cargar la clave desde los secretos de Streamlit
-key_data = json.loads(st.secrets["GOOGLE_CLOUD_KEY_JSON"])
-
-# Crear credenciales
-creds = Credentials.from_service_account_info(key_data)
-client = gspread.authorize(creds)
+# Cargar las credenciales de Google Cloud desde secrets
+key_data = st.secrets["GOOGLE_CLOUD_KEY_JSON"]
 
 # Configuración de la aplicación
 st.sidebar.title("Navegación")
@@ -19,11 +15,20 @@ page = st.sidebar.radio("Ir a", ["Evaluación de Crédito", "Base Crédito", "Ev
 
 @st.cache_data
 def cargar_datos():
+    # Configuración de conexión de Google Sheets
+    SCOPES = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive"
+    ]
+
+    # Crear credenciales con el contenido cargado
+    creds = Credentials.from_service_account_info(key_data, scopes=SCOPES)
+    client = gspread.authorize(creds)
+
     # Carga de datos de Google Sheets
     spreadsheet_id = "1w2hMUpuWAJfc2rNv2IbH_WfiX8hVe8U7M47dOdzkrsg"
     worksheet_credito = client.open_by_key(spreadsheet_id).worksheet("CREDITO")
-    spreadsheet = client.open_by_key(spreadsheet_id)
-    worksheet_originacion = spreadsheet.worksheet("ORIGINACIÓN")
+    worksheet_originacion = client.open_by_key(spreadsheet_id).worksheet("ORIGINACIÓN")
 
     credito = get_as_dataframe(worksheet_credito, evaluate_formulas=True)
     credito = credito[["Fecha de asignación", "FOLIO", "Cliente", "Resultado"]]
@@ -36,7 +41,7 @@ def cargar_datos():
     credito = pd.concat([credito, originacion], ignore_index=True)
 
     # Conexión a la base de datos SQL con SQLAlchemy
-    database_url = "mssql+pymssql://credito:Cr3d$.23xme@52.167.231.145:51433/CreditoYCobranza"
+    database_url = st.secrets["DATABASE_URL"]
     engine = create_engine(database_url)
 
     query3 = """SELECT [SapIdCliente], CAST([FechaGenerado] AS DATE) AS FechaGenerado, [Fecha], [Mensualidad]
@@ -62,7 +67,7 @@ if page == "Base Crédito":
     st.title("Base Crédito Consolidada")
 
     # Filtro para la columna 'Resultado'
-    resultado_unico = credito["Resultado"].dropna().unique().tolist()  # Obtener valores únicos
+    resultado_unico = credito["Resultado"].dropna().unique().tolist()
     filtro_resultado = st.selectbox("Filtrar por Resultado", options=["Todos"] + resultado_unico)
 
     # Aplicar el filtro si no se selecciona "Todos"
@@ -81,13 +86,11 @@ elif page == "Evaluación de Crédito":
     mensualidad_moto = st.number_input("Mensualidad Moto", min_value=0, step=1)
 
     if st.button("Calcular Resultado"):
-        # Convertir columnas a tipos compatibles
         vector_apvap["ID_CLIENTE"] = pd.to_numeric(vector_apvap["ID_CLIENTE"], errors="coerce").astype("Int64")
         credito["ID_CLIENTE"] = pd.to_numeric(credito["ID_CLIENTE"], errors="coerce").astype("Int64")
         Mensualidad = Mensualidad.reset_index()
         Mensualidad["SapIdCliente"] = Mensualidad["SapIdCliente"].astype("int64")
 
-        # Cálculos principales
         vector_apvap["AP3_U6M"] = vector_apvap.apply(
             lambda row: 30 if "AP3" in str(row.values) or "AP4" in str(row.values) else 0, axis=1
         )
@@ -98,22 +101,18 @@ elif page == "Evaluación de Crédito":
         base_credito = pd.merge(base_credito, posturas_gestiones, on="ID_CLIENTE", how="left")
         base_credito = pd.merge(base_credito, Mensualidad, left_on="ID_CLIENTE", right_on="SapIdCliente", how="left")
 
-        # Agregar las columnas necesarias para los cálculos
         base_credito["Score_Buro"] = score_buro
         base_credito["Not_HIT"] = score_nohit
 
-        # Calcular mensualidad total
         base_credito["Mensualidad_Total"] = base_credito.apply(
             lambda row: row["Mensualidad"] + mensualidad_moto if not pd.isnull(row["Mensualidad"]) else mensualidad_moto,
             axis=1,
         )
 
-        # Resultado Mensualidad
         base_credito["Resultado_Mensualidad"] = base_credito.apply(
             lambda row: 40 if row["Mensualidad_Total"] > row["Mensualidad"] * 2 else 0, axis=1
         )
 
-        # Resultado Buró
         def resultado_buro(row):
             if pd.isna(row["Score_Buro"]):
                 return "Sin historial"
@@ -136,7 +135,6 @@ elif page == "Evaluación de Crédito":
 
         base_credito["Resultado_Buro"] = base_credito.apply(resultado_buro, axis=1)
 
-        # Resultado Gestiones
         base_credito["Marca_Gestiones"] = base_credito["Marca_Gestiones"].apply(lambda x: "SIN GESTION" if pd.isnull(x) else x)
 
         def resultado_gestiones(row):
@@ -151,7 +149,6 @@ elif page == "Evaluación de Crédito":
 
         base_credito["Resultado_Gestiones"] = base_credito.apply(resultado_gestiones, axis=1)
 
-        # Calcular el puntaje total
         def calcular_puntaje(row):
             return sum([
                 pd.to_numeric(row["AP3_U6M"], errors="coerce") or 0,
@@ -162,24 +159,21 @@ elif page == "Evaluación de Crédito":
 
         base_credito["Puntaje"] = base_credito.apply(calcular_puntaje, axis=1)
 
-        # Determinar el resultado final
-        base_credito["Resultado"] = base_credito["Puntaje"].apply(
-            lambda x: "No aplica" if pd.isna(x) else ("Aceptado" if x <= 50 else "Rechazado")
-        )
+        base_credito["Resultado"] = base_credito["Puntaje"].apply(lambda x: "Aceptado" if x <= 50 else "Rechazado")
 
-        # Extraer el resultado del cliente ingresado
         resultado_cliente = base_credito[base_credito["ID_CLIENTE"] == ID_CLIENTE]
         if not resultado_cliente.empty:
             puntaje = resultado_cliente.iloc[0]["Puntaje"]
             resultado = resultado_cliente.iloc[0]["Resultado"]
 
-            # Mostrar el mensaje descriptivo
             col1, col2 = st.columns(2)
             with col1:
                 st.markdown(f"**Puntaje Total:** {puntaje}")
             with col2:
-                st.markdown(f"*Resultado:* {'🔴 Rechazado' if resultado == 'Rechazado' else ('🔴 No aplica para este análisis!' if resultado == 'No aplica' else '🟢 Aceptado')}")
-                st.markdown("---")
+                if pd.isna(puntaje):
+                    st.markdown("🔴 No aplica para este análisis!")
+                else:
+                    st.markdown(f"*Resultado:* {'🔴 Rechazado' if resultado == 'Rechazado' else '🟢 Aceptado'}")
         else:
             st.error("No se encontró información para el cliente ingresado.")
 
