@@ -41,7 +41,7 @@ def cargar_datos():
     credito = pd.concat([credito, originacion], ignore_index=True)
 
     # Conexión a la base de datos SQL con SQLAlchemy
-    database_url = st.secrets["DATABASE_URL"]
+    database_url = f"mssql+pymssql://{st.secrets['DATABASE']['username']}:{st.secrets['DATABASE']['password']}@{st.secrets['DATABASE']['host']}:{st.secrets['DATABASE']['port']}/{st.secrets['DATABASE']['database']}"
     engine = create_engine(database_url)
 
     query3 = """SELECT [SapIdCliente], CAST([FechaGenerado] AS DATE) AS FechaGenerado, [Fecha], [Mensualidad]
