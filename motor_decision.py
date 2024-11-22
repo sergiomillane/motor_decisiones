@@ -4,10 +4,16 @@ from sqlalchemy import create_engine
 from gspread_dataframe import get_as_dataframe
 from google.oauth2.service_account import Credentials
 import gspread
-import json
 
-# Cargar las credenciales de Google Cloud desde secrets
+# Configuración de claves de Google Cloud desde st.secrets
 key_data = st.secrets["GOOGLE_CLOUD_KEY_JSON"]
+creds = Credentials.from_service_account_info(key_data)
+client = gspread.authorize(creds)
+
+# Configuración de conexión a la base de datos con SQLAlchemy
+db_config = st.secrets["DATABASE"]
+database_url = f"mssql+pymssql://{db_config['username']}:{db_config['password']}@{db_config['host']}:{db_config['port']}/{db_config['database']}"
+engine = create_engine(database_url)
 
 # Configuración de la aplicación
 st.sidebar.title("Navegación")
@@ -20,8 +26,6 @@ def cargar_datos():
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive"
     ]
-
-    # Crear credenciales con el contenido cargado
     creds = Credentials.from_service_account_info(key_data, scopes=SCOPES)
     client = gspread.authorize(creds)
 
@@ -35,15 +39,15 @@ def cargar_datos():
     credito = credito.rename(columns={"Cliente": "ID_CLIENTE"})
 
     originacion = get_as_dataframe(worksheet_originacion, evaluate_formulas=True)
-    originacion = originacion[["Fecha de asignación", "FOLIO", "Cliente", "Estatus"]]
-    originacion = originacion.rename(columns={"Estatus": "Resultado", "Cliente": "ID_CLIENTE"})
+    originacion = originacion[["Fecha de asignación", "Folio", "Cliente", "Estatus"]]
+    
+    originacion = originacion.rename(columns={"Estatus": "Resultado", "Cliente": "ID_CLIENTE","Folio":"FOLIO"})
+    
+
 
     credito = pd.concat([credito, originacion], ignore_index=True)
 
-    # Conexión a la base de datos SQL con SQLAlchemy
-    database_url = f"mssql+pymssql://{st.secrets['DATABASE']['username']}:{st.secrets['DATABASE']['password']}@{st.secrets['DATABASE']['host']}:{st.secrets['DATABASE']['port']}/{st.secrets['DATABASE']['database']}"
-    engine = create_engine(database_url)
-
+    # Consulta de base de datos con SQLAlchemy
     query3 = """SELECT [SapIdCliente], CAST([FechaGenerado] AS DATE) AS FechaGenerado, [Fecha], [Mensualidad]
                 FROM [CreditoyCobranza].[dbo].[Cartera_Financiera_Diaria]"""
     CF = pd.read_sql(query3, engine)
@@ -119,9 +123,9 @@ elif page == "Evaluación de Crédito":
             elif row["Score_Buro"] == 0:
                 if row["Not_HIT"] >= 500 and row["Not_HIT"] <= 610:
                     return 20
-                elif row["Not_HIT"] > 610 and row["Not_HIT"]<640:
+                elif row["Not_HIT"] > 610 and row["Not_HIT"] < 640:
                     return 10
-                elif row["Not_HIT"] >= 640 and row["Not_HIT"]<800:
+                elif row["Not_HIT"] >= 640 and row["Not_HIT"] < 800:
                     return 0
                 else:
                     return 20
