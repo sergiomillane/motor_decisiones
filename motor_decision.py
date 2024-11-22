@@ -117,16 +117,20 @@ elif page == "Evaluación de Crédito":
             if pd.isna(row["Score_Buro"]):
                 return "Sin historial"
             elif row["Score_Buro"] == 0:
-                if row["Not_HIT"] >= 500 and row["Not_HIT"] < 600:
+                if row["Not_HIT"] >= 500 and row["Not_HIT"] <= 610:
+                    return 20
+                elif row["Not_HIT"] > 610 and row["Not_HIT"]<640:
                     return 10
-                elif row["Not_HIT"] > 600:
+                elif row["Not_HIT"] >= 640 and row["Not_HIT"]<800:
                     return 0
                 else:
                     return 20
             elif row["Not_HIT"] == 0:
-                if row["Score_Buro"] > 500 and row["Score_Buro"] < 580:
+                if row["Score_Buro"] > 500 and row["Score_Buro"] <= 570:
+                    return 20
+                elif row["Score_Buro"] > 570 and row["Score_Buro"] <= 600:
                     return 10
-                elif row["Score_Buro"] >= 580:
+                elif row["Score_Buro"] > 600:
                     return 0
                 else:
                     return 20
